@@ -1,112 +1,118 @@
 #include "sdb.h"
 
-#define NR_WP 32
-
 typedef struct watchpoint {
-  int NO;
-  struct watchpoint *next;
-  char  point_expr[33];
-  word_t point_data;
-  /* TODO: Add more members if necessary */
-
+  char *expr;              // expression pointer.
+  word_t oldval;
+  word_t newval;
+  struct watchpoint *next; // next wp address.
 } WP;
 
-static WP wp_pool[NR_WP] = {};
-static WP *head = NULL, *free_ = NULL;
+static WP *head = NULL;
+static int wp_count = 0;
 
-void init_wp_pool() {
-  int i;
-  for (i = 0; i < NR_WP; i ++) {
-    wp_pool[i].NO = i;
-    wp_pool[i].next = (i == NR_WP - 1 ? NULL : &wp_pool[i + 1]);
+bool new_wp(char *args) {
+  // 1. create a new node.
+  WP *newwp = (WP *) malloc(sizeof(WP));
+  if(newwp == NULL){
+    return false;
   }
 
-  head = NULL;
-  free_ = wp_pool;
-}
-WP* new_wp()
-{
-  if(free_==NULL)
-    assert(0);
-  WP* tmp=free_;
-  free_=free_->next;
-  if(head!=NULL)
-    tmp->next=head;
-  else
-    tmp->next=NULL;
-  head=tmp; 
-  return tmp;
-}
-void free_wp(WP *wp)
-{
-  WP* tmp=head;
-  if(head->NO==wp->NO)
-  {
-    head=head->next;
-    tmp->next=free_;
-    free_=tmp;
-    return ;
+  bool success;
+  newwp->expr = (char *) malloc(sizeof(char)*(strlen(args)+1));
+  strcpy(newwp->expr,args);
+  newwp->oldval = 0;
+  newwp->newval = expr(newwp->expr,&success);
+  newwp->next = NULL;
+
+  if(success == false){
+    free(newwp->expr);
+    free(newwp);
   }
-  while(tmp)
-  {
-    if(tmp->next->NO==wp->NO)
-    {
-      WP* tmp1=tmp->next;
-      tmp->next=tmp->next->next;
-      if(free_==NULL)
-        tmp1->next=free_;
-      else
-        tmp1->next=NULL;
-      free_=tmp1;
-      break;
+  else{
+    // 2. add new node to link list.
+    if(head == NULL){
+      head = newwp;
     }
-    tmp=tmp->next;
-  }
-  return ;
-}
-
-
-/* TODO: Implement the functionality of watchpoint */
-void check_point_change()
-{
-    WP* tmp=head;
-    while(tmp)
-    {
-      bool success;
-      word_t val=expr(tmp->point_expr,&success);              
-      if(val!=tmp->point_data)
-      {
-        nemu_state.state=NEMU_STOP;
-        printf("Hardware watchpoint %s \n\nold_val=%lu \nnow_val=%lu\n",tmp->point_expr,tmp->point_data,val);
-        tmp->point_data=val;
-      }
-      tmp=tmp->next;
+    else{
+      WP * p;
+      for (p = head; p->next != NULL; p = p->next);
+      p->next = newwp;
     }
-    return ;
-}
-
-int add_point(char *str,bool *success)
-{
-    WP* wp=new_wp();
-    strcpy(wp->point_expr,str);
-    wp->point_data=expr(str,success);
-    return wp->NO;
-}
-
-void del_point(int id)
-{
-  WP tmp;
-  tmp.NO=id;
-  free_wp(&tmp);
-}
-
-void show_point()
-{
-  WP* tmp=head;
-  while(tmp)
-  {
-    printf("Hardware watchpoint %d:%s \nval=%lu\n",tmp->NO,tmp->point_expr,tmp->point_data);
-    tmp=tmp->next;
+    
+    // 3.update count for wp.
+    wp_count = wp_count + 1;
+    printf("new watch point %d: expr = %s,value = 0x%lx\n",wp_count,newwp->expr,newwp->newval);
   }
-  return ;
+
+  return success;
 }
+
+bool free_wp(int delNO){
+
+  // 1. delNO must in [1,wp_count]
+  if(delNO > wp_count || delNO < 1){
+    return false;
+  }
+
+  // 2.find delwp and remove it from link, then relink:
+  WP *delwp;
+  if(delNO == 1){   //delwp is head!
+    delwp = head;
+    head = head->next;
+  }
+  else{           //delwp is not head.
+    WP *p = head; 
+    for(int i=1 ;i <= delNO -2 ; i++){
+      p = p->next;
+    }
+    // mind: p is the wp befor delwp.
+    delwp = p->next;
+    p->next = delwp->next;
+  }
+
+  // 3. delete and free delwp.
+  wp_count = wp_count - 1;
+  printf("remove watch point ID = %d,expr = %s,value = 0x%lx\n",delNO,delwp->expr,delwp->newval);
+  free(delwp->expr);
+  free(delwp);
+  return true;
+}
+
+bool WP_check_update() {
+  WP *p=head;
+  bool nothing;
+  bool update = false;
+  for(int i=1; i<= wp_count; i++){
+    p->oldval = p->newval;
+    p->newval = expr(p->expr,&nothing);
+    if(p->oldval != p->newval){
+      update = true;
+      printf("watch point %d has update:expr = %s, old value = 0x%lx, new value = 0x%lx, ",i,p->expr,p->oldval,p->newval);
+    }
+    p = p->next;
+  }
+  return update;
+}
+
+void wp_display(){
+  WP *p=head;
+  for(int i=1; i<= wp_count; i++,p = p->next){
+    printf("watch point %d: expr = %s, old value = 0x%lx, new value = 0x%lx\n",i,p->expr,p->oldval,p->newval);
+  }
+}
+
+// remove by dingyawei:
+// #define NR_WP 32
+// static WP wp_pool[NR_WP] = {};
+// static WP *head = NULL, *free_ = NULL;
+
+// void init_wp_pool() {
+//   int i;
+//   for (i = 0; i < NR_WP; i ++) {
+//     wp_pool[i].NO = i;
+//     wp_pool[i].next = (i == NR_WP - 1 ? NULL : &wp_pool[i + 1]);
+//   }
+
+//   head = NULL;
+//   free_ = wp_pool;
+// }

@@ -5,7 +5,13 @@
 !*.mk
 !*.[cSh]
 !*.v
+!*.sv
 !*.cc
 !*.cpp
 !.gitignore
 !README.md
+!/vsrc/*
+!/csrc/*
+/obj_dir
+dump.vcd
+
